@@ -82,6 +82,40 @@ void DebugLogText(const char* fmt, Args&&... args) {
 template <typename... Args>
 void DebugLogText(const char*, Args&&...) { }
 #endif
+
+	/**
+	 * Computes the pixel width a line will occupy once rendered, ignoring
+	 * message command codes (\c[x], \s[x], \_, \$, ...) which do not
+	 * produce a visible glyph. This lets us position a line for
+	 * right/center alignment *before* the typewriter effect starts
+	 * printing it.
+	 *
+	 * This is a best-effort approximation of the escape parsing done in
+	 * Window_Message::UpdateMessage(): any escape_char followed by a
+	 * letter is dropped, along with a following bracketed argument
+	 * (e.g. "[3]"), since none of those produce a glyph on screen.
+	 */
+	int ComputeLineWidth(const Font& font, std::string_view line) {
+		std::string stripped;
+		stripped.reserve(line.size());
+
+		const char escape_char = Player::escape_char;
+		size_t i = 0;
+		while (i < line.size()) {
+			if (line[i] == escape_char && i + 1 < line.size()) {
+				i += 2; // skip escape_char + code letter
+				if (i < line.size() && line[i] == '[') {
+					auto close = line.find(']', i);
+					i = (close == std::string_view::npos) ? line.size() : close + 1;
+				}
+				continue;
+			}
+			stripped.push_back(line[i]);
+			++i;
+		}
+
+		return Text::GetSize(font, stripped).width;
+	}
 } //namespace
 
 // C4428 is nonsense
@@ -135,6 +169,8 @@ Window_Message::~Window_Message() {
 
 void Window_Message::StartMessageProcessing(PendingMessage pm) {
 	text.clear();
+	line_widths.clear();
+	line_widths_index = 0;
 	pending_message = std::move(pm);
 
 	if (!IsVisible()) {
@@ -148,6 +184,8 @@ void Window_Message::StartMessageProcessing(PendingMessage pm) {
 
 	const auto& lines = pending_message.GetLines();
 
+	auto measuring_font = GetFont() ? GetFont() : Font::Default();
+
 	int num_lines = 0;
 	auto append = [&](const std::string& line) {
 		bool force_page_break = (!line.empty() && line.back() == '\f');
@@ -157,6 +195,10 @@ void Window_Message::StartMessageProcessing(PendingMessage pm) {
 			text.push_back('\n');
 		}
 		++num_lines;
+
+		// Pre-compute this line's rendered width so it can be aligned
+		// (left/center/right) before the typewriter effect starts.
+		line_widths.push_back(ComputeLineWidth(*measuring_font, std::string_view(line).substr(0, line.size() - force_page_break)));
 
 		if (num_lines == GetMaxLinesPerPage() || force_page_break) {
 			text.push_back('\f');
@@ -247,6 +289,30 @@ void Window_Message::ShowGoldWindow() {
 	gold_window->Refresh();
 }
 
+int Window_Message::ComputeLineStartX(int line_width) const {
+	int available = text_right_bound - text_left_bound;
+	int offset = 0;
+
+	switch (text_align) {
+		case Text::AlignRight:
+			offset = available - line_width;
+			break;
+		case Text::AlignCenter:
+			offset = (available - line_width) / 2;
+			break;
+		case Text::AlignLeft:
+		default:
+			offset = 0;
+			break;
+	}
+
+	if (offset < 0) {
+		offset = 0;
+	}
+
+	return text_left_bound + offset;
+}
+
 void Window_Message::InsertNewPage() {
 	DebugLog("{}: MSG NEW PAGE");
 	// Cancel pending face requests for async
@@ -312,21 +378,28 @@ void Window_Message::InsertNewPage() {
 		gold_window->SetBackgroundPreserveTransparentColor(GetBackgroundPreserveTransparentColor() && !gold_window->GetBackgroundAlpha());
 	}
 
+	// Determine the horizontal bounds available for text on this page.
+	// These bounds shrink around a face graphic, and are what alignment
+	// (left/center/right) is computed against.
+	text_left_bound = 0;
+	text_right_bound = contents->GetWidth();
+
 	if (IsFaceEnabled()) {
 		if (!Main_Data::game_system->IsMessageFaceRightPosition()) {
-			contents_x = LeftMargin + FaceSize + RightFaceMargin;
+			text_left_bound = LeftMargin + FaceSize + RightFaceMargin;
 			DrawFace(Main_Data::game_system->GetMessageFaceName(), Main_Data::game_system->GetMessageFaceIndex(), LeftMargin, TopMargin, Main_Data::game_system->IsMessageFaceFlipped());
 		} else {
-			contents_x = 0;
+			text_right_bound = 248;
 			DrawFace(Main_Data::game_system->GetMessageFaceName(), Main_Data::game_system->GetMessageFaceIndex(), 248, TopMargin, Main_Data::game_system->IsMessageFaceFlipped());
 		}
-	} else {
-		contents_x = 0;
 	}
 
 	if (pending_message.GetChoiceStartLine() == 0 && pending_message.HasChoices()) {
-		contents_x += 12;
+		text_left_bound += 12;
 	}
+
+	int line_width = (line_widths_index < line_widths.size()) ? line_widths[line_widths_index++] : 0;
+	contents_x = ComputeLineStartX(line_width);
 
 	contents_y = 2;
 
@@ -349,11 +422,9 @@ void Window_Message::InsertNewPage() {
 
 void Window_Message::InsertNewLine() {
 	DebugLog("{}: MSG NEW LINE");
-	if (IsFaceEnabled() && !Main_Data::game_system->IsMessageFaceRightPosition()) {
-		contents_x = LeftMargin + FaceSize + RightFaceMargin;
-	} else {
-		contents_x = 0;
-	}
+
+	int line_width = (line_widths_index < line_widths.size()) ? line_widths[line_widths_index++] : 0;
+	contents_x = ComputeLineStartX(line_width);
 
 	contents_y += 16;
 	++line_count;
@@ -925,4 +996,3 @@ void Window_Message::SetWait(int frames) {
 bool Window_Message::IsFaceEnabled() const {
 	return pending_message.IsFaceEnabled() && !Main_Data::game_system->GetMessageFaceName().empty();
 }
-
