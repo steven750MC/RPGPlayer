@@ -20,11 +20,13 @@
 
 // Headers
 #include <string>
+#include <vector>
 #include "window_gold.h"
 #include "window_numberinput.h"
 #include "window_selectable.h"
 #include "pending_message.h"
 #include "async_op.h"
+#include "text.h"
 
 /**
  * Window Message Class.
@@ -138,6 +140,17 @@ public:
 	 **/
 	void SetMaxLinesPerPage(int lines);
 
+	/** @return the current text alignment used for dialogue lines */
+	Text::Alignment GetTextAlignment() const;
+
+	/**
+	 * Set the horizontal alignment used to place each dialogue line
+	 * inside the message window (Left / Center / Right).
+	 *
+	 * @param align the new alignment
+	 */
+	void SetTextAlignment(Text::Alignment align);
+
 protected:
 	/** Async operation */
 	AsyncOp aop;
@@ -190,6 +203,23 @@ protected:
 
 	std::vector<Font::ShapeRet> shape_ret;
 
+	/** Horizontal alignment applied to every dialogue line. Defaults to right-aligned
+	 * so that text sticks to the right edge of the window, as requested. */
+	Text::Alignment text_align = Text::AlignRight;
+
+	/** Pre-computed pixel width of each line in the current message, used to
+	 * position the line according to text_align before typing starts. */
+	std::vector<int> line_widths;
+	/** Index into line_widths of the line that is about to be typed. */
+	size_t line_widths_index = 0;
+
+	/** Left-most X coordinate available for text on the current page (accounts for
+	 * a left-positioned face graphic and/or choice indentation). */
+	int text_left_bound = 0;
+	/** Right-most X coordinate available for text on the current page (accounts for
+	 * a right-positioned face graphic). */
+	int text_right_bound = 0;
+
 	bool DrawGlyph(Font& font, const Bitmap& system, char32_t glyph, bool is_exfont);
 	bool DrawGlyph(Font& font, const Bitmap& system, const Font::ShapeRet& shape);
 	void IncrementLineCharCounter(int width);
@@ -197,6 +227,10 @@ protected:
 	void SetWaitForCharacter(int width);
 	void SetWaitForNonPrintable(int frames);
 	void SetWait(int frames);
+
+	/** @return the starting X position for a line of the given pixel width,
+	 * honoring text_align and the current text_left_bound / text_right_bound. */
+	int ComputeLineStartX(int line_width) const;
 
 	bool IsFaceEnabled() const;
 };
@@ -225,6 +259,14 @@ inline int Window_Message::GetMaxLinesPerPage() const {
 /** @return the number of lines per page */
 inline void Window_Message::SetMaxLinesPerPage(int lines) {
 	max_lines_per_page = lines;
+}
+
+inline Text::Alignment Window_Message::GetTextAlignment() const {
+	return text_align;
+}
+
+inline void Window_Message::SetTextAlignment(Text::Alignment align) {
+	text_align = align;
 }
 
 #endif
