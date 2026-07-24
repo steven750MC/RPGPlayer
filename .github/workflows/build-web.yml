@@ -1,0 +1,122 @@
+# .github/workflows/build-web.yml
+#
+# Builds EasyRPG Player for the Web (Emscripten -> index.js + index.wasm)
+# and uploads the result as a downloadable workflow artifact.
+#
+# This mirrors the manual steps used by the EasyRPG project itself:
+#   1. Build the Emscripten SDK + native dependencies via EasyRPG/buildscripts
+#   2. Build liblcf against that toolchain
+#   3. Configure & build Player itself with CMake for CMAKE_SYSTEM_NAME=Emscripten
+#
+# Because step 1 is slow (compiles zlib/libpng/freetype/pixman/etc from
+# source), it is cached across runs keyed on the buildscripts commit hash.
+
+name: Build Web (WASM)
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Player
+        uses: actions/checkout@v4
+        with:
+          path: Player
+
+      - name: Checkout liblcf
+        uses: actions/checkout@v4
+        with:
+          repository: EasyRPG/liblcf
+          path: liblcf
+
+      - name: Checkout buildscripts (emscripten deps)
+        uses: actions/checkout@v4
+        with:
+          repository: EasyRPG/buildscripts
+          path: buildscripts
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build cmake pkg-config autoconf automake libtool \
+            python3 git
+
+      # --- Step 1: Emscripten SDK + native dependency libraries ---------
+      # This is the expensive part, so it's cached by the buildscripts
+      # commit hash. Bump CACHE_VERSION below to force a rebuild.
+      - name: Cache Emscripten toolchain + deps
+        id: cache-emsdk
+        uses: actions/cache@v4
+        with:
+          path: buildscripts/emscripten
+          key: emsdk-deps-v1-${{ hashFiles('buildscripts/emscripten/**') }}
+
+      - name: Build Emscripten SDK + dependencies
+        if: steps.cache-emsdk.outputs.cache-hit != 'true'
+        working-directory: buildscripts/emscripten
+        run: |
+          chmod +x 0_build_everything.sh
+          ./0_build_everything.sh
+
+      - name: Export toolchain paths
+        run: |
+          echo "TOOLCHAIN_DIR=${{ github.workspace }}/buildscripts/emscripten" >> "$GITHUB_ENV"
+          echo "EMSDK_DIR=${{ github.workspace }}/buildscripts/emscripten/emsdk-portable" >> "$GITHUB_ENV"
+
+      - name: Activate emsdk environment
+        run: |
+          source "$EMSDK_DIR/emsdk_env.sh"
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+          echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+          echo "EM_CONFIG=$EM_CONFIG" >> "$GITHUB_ENV"
+
+      # --- Step 2: liblcf (RPG Maker data reader), built for Emscripten --
+      - name: Build liblcf for Emscripten
+        working-directory: liblcf
+        run: |
+          export EM_PKG_CONFIG_PATH="$TOOLCHAIN_DIR/lib/pkgconfig"
+          autoreconf -fi
+          emconfigure ./configure --prefix="$TOOLCHAIN_DIR" --disable-shared
+          emmake make -j"$(nproc)"
+          emmake make install
+
+      # --- Step 3: Player itself -----------------------------------------
+      - name: Configure Player (CMake + Emscripten toolchain)
+        working-directory: Player
+        run: |
+          cmake . -GNinja -Bbuild \
+            -DCMAKE_TOOLCHAIN_FILE="$EMSDK_DIR/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+            -DCMAKE_PREFIX_PATH="$TOOLCHAIN_DIR" \
+            -DCMAKE_INSTALL_PREFIX=output \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLAYER_JS_BUILD_SHELL=ON
+
+      - name: Build Player (WASM)
+        working-directory: Player
+        run: cmake --build build --parallel
+
+      # --- Collect + upload the output files -----------------------------
+      - name: Locate build output
+        working-directory: Player
+        run: |
+          mkdir -p webplayer-output
+          find build -maxdepth 1 \( -name "*.js" -o -name "*.wasm" -o -name "*.html" -o -name "*.data" \) \
+            -exec cp {} webplayer-output/ \;
+          ls -la webplayer-output
+
+      - name: Upload web player artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyrpg-player-web
+          path: Player/webplayer-output/
+          if-no-files-found: error
