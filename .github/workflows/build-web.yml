@@ -73,7 +73,7 @@ jobs:
       - name: Export toolchain paths
         run: |
           echo "TOOLCHAIN_DIR=${{ github.workspace }}/buildscripts/emscripten" >> "$GITHUB_ENV"
-          echo "EMSDK_DIR=${{ github.workspace }}/buildscripts/emscripten/emsdk-portable" >> "$GITHUB_ENV"
+          echo "EEMSDK_DIR=${{ github.workspace }}/buildscripts/emscripten/emsdk-portable" >> "$GITHUB_ENV"
 
       # NOTE: we deliberately do NOT try to persist PATH/EMSDK/EM_CONFIG via
       # $GITHUB_ENV here. emsdk_env.sh must run in the SAME shell invocation
@@ -88,7 +88,7 @@ jobs:
       - name: Build liblcf for Emscripten
         working-directory: liblcf
         run: |
-          source "$EMSDK_DIR/emsdk_env.sh"
+          source "$EEMSDK_DIR/emsdk_env.sh"
           export EM_PKG_CONFIG_PATH="$TOOLCHAIN_DIR/lib/pkgconfig"
           autoreconf -fi
           emconfigure ./configure --prefix="$TOOLCHAIN_DIR" --disable-shared
@@ -99,9 +99,9 @@ jobs:
       - name: Configure Player (CMake + Emscripten toolchain)
         working-directory: Player
         run: |
-          source "$EMSDK_DIR/emsdk_env.sh"
+          source "$EEMSDK_DIR/emsdk_env.sh"
           cmake . -GNinja -Bbuild \
-            -DCMAKE_TOOLCHAIN_FILE="$EMSDK_DIR/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="$EEMSDK_DIR/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
             -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
             -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
@@ -113,7 +113,7 @@ jobs:
       - name: Build Player (WASM)
         working-directory: Player
         run: |
-          source "$EMSDK_DIR/emsdk_env.sh"
+          source "$EEMSDK_DIR/emsdk_env.sh"
           cmake --build build --parallel
 
       # --- Collect + upload the output files -----------------------------
@@ -131,4 +131,3 @@ jobs:
           name: easyrpg-player-web
           path: Player/webplayer-output/
           if-no-files-found: error
- 
