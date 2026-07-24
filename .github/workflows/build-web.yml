@@ -46,7 +46,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             ninja-build cmake pkg-config autoconf automake libtool \
-            python3 git
+            python3 python3-pip git
+          # harfbuzz's build (as pulled in by buildscripts/emscripten) uses
+          # Meson, not CMake/Autotools. The Ubuntu apt package is often too
+          # old for current harfbuzz releases, so install a fresh one via pip.
+          pip3 install --user meson
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # --- Step 1: Emscripten SDK + native dependency libraries ---------
       # This is the expensive part, so it's cached by the buildscripts
@@ -120,3 +125,4 @@ jobs:
           name: easyrpg-player-web
           path: Player/webplayer-output/
           if-no-files-found: error
+ 
