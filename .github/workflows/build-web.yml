@@ -75,17 +75,20 @@ jobs:
           echo "TOOLCHAIN_DIR=${{ github.workspace }}/buildscripts/emscripten" >> "$GITHUB_ENV"
           echo "EMSDK_DIR=${{ github.workspace }}/buildscripts/emscripten/emsdk-portable" >> "$GITHUB_ENV"
 
-      - name: Activate emsdk environment
-        run: |
-          source "$EMSDK_DIR/emsdk_env.sh"
-          echo "PATH=$PATH" >> "$GITHUB_ENV"
-          echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
-          echo "EM_CONFIG=$EM_CONFIG" >> "$GITHUB_ENV"
+      # NOTE: we deliberately do NOT try to persist PATH/EMSDK/EM_CONFIG via
+      # $GITHUB_ENV here. emsdk_env.sh must run in the SAME shell invocation
+      # that uses emcc/emconfigure, because each workflow step gets a fresh
+      # shell. Writing EM_CONFIG to $GITHUB_ENV while it's still empty (before
+      # the config file exists) poisons every later step with an EMPTY (not
+      # unset) EM_CONFIG, which breaks emconfigure in a very confusing way
+      # ("BINARYEN_ROOT not set in config ()"). Instead, every step below
+      # sources emsdk_env.sh itself, right before it's needed.
 
       # --- Step 2: liblcf (RPG Maker data reader), built for Emscripten --
       - name: Build liblcf for Emscripten
         working-directory: liblcf
         run: |
+          source "$EMSDK_DIR/emsdk_env.sh"
           export EM_PKG_CONFIG_PATH="$TOOLCHAIN_DIR/lib/pkgconfig"
           autoreconf -fi
           emconfigure ./configure --prefix="$TOOLCHAIN_DIR" --disable-shared
@@ -96,6 +99,7 @@ jobs:
       - name: Configure Player (CMake + Emscripten toolchain)
         working-directory: Player
         run: |
+          source "$EMSDK_DIR/emsdk_env.sh"
           cmake . -GNinja -Bbuild \
             -DCMAKE_TOOLCHAIN_FILE="$EMSDK_DIR/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
@@ -108,7 +112,9 @@ jobs:
 
       - name: Build Player (WASM)
         working-directory: Player
-        run: cmake --build build --parallel
+        run: |
+          source "$EMSDK_DIR/emsdk_env.sh"
+          cmake --build build --parallel
 
       # --- Collect + upload the output files -----------------------------
       - name: Locate build output
