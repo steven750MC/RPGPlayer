@@ -289,8 +289,8 @@ void Window_Message::ShowGoldWindow() {
 	gold_window->Refresh();
 }
 
-int Window_Message::ComputeLineStartX(int line_width) const {
-	int available = text_right_bound - text_left_bound;
+int Window_Message::ComputeLineStartX(int left_bound, int right_bound, int line_width) const {
+	int available = right_bound - left_bound;
 	int offset = 0;
 
 	switch (text_align) {
@@ -310,7 +310,7 @@ int Window_Message::ComputeLineStartX(int line_width) const {
 		offset = 0;
 	}
 
-	return text_left_bound + offset;
+	return left_bound + offset;
 }
 
 void Window_Message::InsertNewPage() {
@@ -399,7 +399,7 @@ void Window_Message::InsertNewPage() {
 	}
 
 	int line_width = (line_widths_index < line_widths.size()) ? line_widths[line_widths_index++] : 0;
-	contents_x = ComputeLineStartX(line_width);
+	contents_x = ComputeLineStartX(text_left_bound, text_right_bound, line_width);
 
 	contents_y = 2;
 
@@ -423,11 +423,16 @@ void Window_Message::InsertNewPage() {
 void Window_Message::InsertNewLine() {
 	DebugLog("{}: MSG NEW LINE");
 
-	int line_width = (line_widths_index < line_widths.size()) ? line_widths[line_widths_index++] : 0;
-	contents_x = ComputeLineStartX(line_width);
-
 	contents_y += 16;
 	++line_count;
+
+	// Start from the page's normal text bounds, then narrow whichever side
+	// needs to make room for the choice indent, *before* positioning the
+	// line. Narrowing after the fact (adding to contents_x post-alignment)
+	// only works for left-aligned text; for right/center alignment it would
+	// push the line past the window edge instead of indenting it.
+	int left_bound = text_left_bound;
+	int right_bound = text_right_bound;
 
 	if (pending_message.HasChoices() && line_count >= pending_message.GetChoiceStartLine()) {
 		unsigned choice_index = line_count - pending_message.GetChoiceStartLine();
@@ -440,8 +445,16 @@ void Window_Message::InsertNewLine() {
 			}
 		}
 
-		contents_x += 12;
+		if (text_align == Text::AlignRight) {
+			right_bound -= 12;
+		} else {
+			left_bound += 12;
+		}
 	}
+
+	int line_width = (line_widths_index < line_widths.size()) ? line_widths[line_widths_index++] : 0;
+	contents_x = ComputeLineStartX(left_bound, right_bound, line_width);
+
 	line_char_counter = 0;
 	prev_char_printable = false;
 	prev_char_waited = true;
