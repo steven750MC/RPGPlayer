@@ -235,7 +235,7 @@ void Scene_Title::CreateCommandWindow() {
 
 	// Set "Translate" based on metadata
 	if (Player::translation.HasTranslations() && Player::player_config.lang_select_in_title.Get()) {
-		options.push_back(Player::meta->GetExVocabTranslateTitleText());
+ 	indices.exit = -1;
 		indices.translate = indices.exit;
 		indices.exit++;
 	}
