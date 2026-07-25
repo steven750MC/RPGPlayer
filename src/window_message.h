@@ -229,8 +229,8 @@ protected:
 	void SetWait(int frames);
 
 	/** @return the starting X position for a line of the given pixel width,
-	 * honoring text_align and the current text_left_bound / text_right_bound. */
-	int ComputeLineStartX(int line_width) const;
+	 * honoring text_align, constrained to [left_bound, right_bound]. */
+	int ComputeLineStartX(int left_bound, int right_bound, int line_width) const;
 
 	bool IsFaceEnabled() const;
 };
