@@ -119,13 +119,14 @@ void DebugLogText(const char*, Args&&...) { }
 
 	/**
 	 * @return true if the given Unicode codepoint belongs to a
-	 * right-to-left script (Hebrew, Arabic, and the Arabic-derived Persian
-	 * / Urdu / Pashto / Sindhi / Kurdish alphabets, which all share the
-	 * Arabic Unicode blocks).
+	 * right-to-left script block: Hebrew, or Arabic/Persian/Urdu/Pashto/
+	 * Kurdish (which all share the Arabic Unicode blocks). This includes
+	 * Arabic-script punctuation (، ؛ ؟) and Persian digits (۰-۹), which are
+	 * intentionally treated as RTL signals too, not just letters.
 	 */
 	bool IsRtlCodepoint(char32_t cp) {
 		return (cp >= 0x0590 && cp <= 0x05FF)   // Hebrew
-			|| (cp >= 0x0600 && cp <= 0x06FF)   // Arabic (incl. Persian letters/digits)
+			|| (cp >= 0x0600 && cp <= 0x06FF)   // Arabic (incl. Persian letters, digits, punctuation)
 			|| (cp >= 0x0750 && cp <= 0x077F)   // Arabic Supplement
 			|| (cp >= 0x08A0 && cp <= 0x08FF)   // Arabic Extended-A
 			|| (cp >= 0xFB1D && cp <= 0xFB4F)   // Hebrew Presentation Forms
@@ -134,19 +135,40 @@ void DebugLogText(const char*, Args&&...) { }
 	}
 
 	/**
+	 * @return true if the codepoint is a "regular" left-to-right letter
+	 * (Latin incl. accents, Greek, Cyrillic). Used only to tell "this
+	 * message has ordinary LTR letters" apart from "this message is only
+	 * digits/punctuation", when no RTL letter was found anywhere in it.
+	 */
+	bool IsLikelyLtrLetter(char32_t cp) {
+		if (cp < 128) {
+			return std::isalpha(static_cast<unsigned char>(cp)) != 0;
+		}
+		return (cp >= 0x00C0 && cp <= 0x02AF)  // Latin-1 Supplement + Latin Extended A/B
+			|| (cp >= 0x0370 && cp <= 0x03FF)  // Greek
+			|| (cp >= 0x0400 && cp <= 0x04FF); // Cyrillic
+	}
+
+	/**
 	 * Scans a message's raw lines (before word-wrap, with message command
-	 * codes still present) for the first visible character, skipping over
-	 * escape sequences (\c[x], \s[x], ...) and plain whitespace, and
-	 * decides the window's text alignment from its script:
-	 *   - a right-to-left letter (Persian/Arabic/Hebrew, ...)  -> AlignRight
-	 *   - anything else visible (Latin letters, digits, ...)  -> AlignLeft
+	 * codes still present) for any right-to-left letter, skipping over
+	 * escape sequences (\c[x], \s[x], ...); punctuation, digits, and
+	 * whitespace are direction-neutral and never influence the result:
 	 *
-	 * If no visible character is found at all (e.g. an empty or
-	 * whitespace/command-only message), `fallback` is returned unchanged
-	 * so the window keeps whatever alignment it already had.
+	 *   - a single RTL letter (Persian/Arabic/Hebrew) ANYWHERE in the
+	 *     message is enough to right-align the whole window immediately,
+	 *     even if the message starts with a quote, dash, digit, or a
+	 *     borrowed Latin word.
+	 *   - otherwise, if any ordinary LTR letter was found -> AlignLeft.
+	 *   - if the message has no letters at all (only digits/symbols),
+	 *     `fallback` is returned so the window keeps its prior alignment.
+	 *
+	 * This runs once per message (not per frame), over typically a few
+	 * hundred bytes of text at most, so the cost is negligible.
 	 */
 	Text::Alignment DetectAlignment(const std::vector<std::string>& lines, Text::Alignment fallback) {
 		const char escape_char = Player::escape_char;
+		bool found_ltr_letter = false;
 
 		for (const auto& line : lines) {
 			std::string_view sv = line;
@@ -161,11 +183,6 @@ void DebugLogText(const char*, Args&&...) { }
 					continue;
 				}
 
-				if (sv[i] == ' ' || sv[i] == '\t') {
-					++i;
-					continue;
-				}
-
 				const char* it = sv.data() + i;
 				const char* end = sv.data() + sv.size();
 				auto ret = Utils::UTF8Next(it, end);
@@ -174,8 +191,23 @@ void DebugLogText(const char*, Args&&...) { }
 					continue;
 				}
 
-				return IsRtlCodepoint(ret.ch) ? Text::AlignRight : Text::AlignLeft;
+				size_t consumed = static_cast<size_t>(ret.next - it);
+				i += (consumed > 0) ? consumed : 1;
+
+				if (IsRtlCodepoint(ret.ch)) {
+					return Text::AlignRight;
+				}
+
+				if (IsLikelyLtrLetter(ret.ch)) {
+					found_ltr_letter = true;
+				}
+				// Punctuation, digits, whitespace, quotes, dashes,
+				// parentheses, etc.: direction-neutral, keep scanning.
 			}
+		}
+
+		if (found_ltr_letter) {
+			return Text::AlignLeft;
 		}
 
 		return fallback;
