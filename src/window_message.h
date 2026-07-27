@@ -144,8 +144,14 @@ public:
 	Text::Alignment GetTextAlignment() const;
 
 	/**
-	 * Set the horizontal alignment used to place each dialogue line
-	 * inside the message window (Left / Center / Right).
+	 * Manually set the horizontal alignment used to place each dialogue
+	 * line inside the message window (Left / Center / Right).
+	 *
+	 * Note: StartMessageProcessing() auto-detects and overwrites this
+	 * based on the script of the message's first visible character (see
+	 * DetectAlignment in window_message.cpp), so a manual call here only
+	 * has a lasting effect if made *after* a message has started, or if
+	 * the auto-detection logic is removed/bypassed.
 	 *
 	 * @param align the new alignment
 	 */
@@ -203,8 +209,11 @@ protected:
 
 	std::vector<Font::ShapeRet> shape_ret;
 
-	/** Horizontal alignment applied to every dialogue line. Defaults to right-aligned
-	 * so that text sticks to the right edge of the window, as requested. */
+	/** Horizontal alignment applied to every dialogue line of the current
+	 * message. Auto-detected at the start of each message: right-aligned
+	 * if the message's first visible character belongs to a right-to-left
+	 * script (Persian/Arabic/Hebrew), left-aligned otherwise. See
+	 * DetectAlignment() in window_message.cpp. */
 	Text::Alignment text_align = Text::AlignRight;
 
 	/** Pre-computed pixel width of each line in the current message, used to
