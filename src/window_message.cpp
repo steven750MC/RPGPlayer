@@ -116,6 +116,70 @@ void DebugLogText(const char*, Args&&...) { }
 
 		return Text::GetSize(font, stripped).width;
 	}
+
+	/**
+	 * @return true if the given Unicode codepoint belongs to a
+	 * right-to-left script (Hebrew, Arabic, and the Arabic-derived Persian
+	 * / Urdu / Pashto / Sindhi / Kurdish alphabets, which all share the
+	 * Arabic Unicode blocks).
+	 */
+	bool IsRtlCodepoint(char32_t cp) {
+		return (cp >= 0x0590 && cp <= 0x05FF)   // Hebrew
+			|| (cp >= 0x0600 && cp <= 0x06FF)   // Arabic (incl. Persian letters/digits)
+			|| (cp >= 0x0750 && cp <= 0x077F)   // Arabic Supplement
+			|| (cp >= 0x08A0 && cp <= 0x08FF)   // Arabic Extended-A
+			|| (cp >= 0xFB1D && cp <= 0xFB4F)   // Hebrew Presentation Forms
+			|| (cp >= 0xFB50 && cp <= 0xFDFF)   // Arabic Presentation Forms-A
+			|| (cp >= 0xFE70 && cp <= 0xFEFF);  // Arabic Presentation Forms-B
+	}
+
+	/**
+	 * Scans a message's raw lines (before word-wrap, with message command
+	 * codes still present) for the first visible character, skipping over
+	 * escape sequences (\c[x], \s[x], ...) and plain whitespace, and
+	 * decides the window's text alignment from its script:
+	 *   - a right-to-left letter (Persian/Arabic/Hebrew, ...)  -> AlignRight
+	 *   - anything else visible (Latin letters, digits, ...)  -> AlignLeft
+	 *
+	 * If no visible character is found at all (e.g. an empty or
+	 * whitespace/command-only message), `fallback` is returned unchanged
+	 * so the window keeps whatever alignment it already had.
+	 */
+	Text::Alignment DetectAlignment(const std::vector<std::string>& lines, Text::Alignment fallback) {
+		const char escape_char = Player::escape_char;
+
+		for (const auto& line : lines) {
+			std::string_view sv = line;
+			size_t i = 0;
+			while (i < sv.size()) {
+				if (sv[i] == escape_char && i + 1 < sv.size()) {
+					i += 2; // skip escape_char + code letter
+					if (i < sv.size() && sv[i] == '[') {
+						auto close = sv.find(']', i);
+						i = (close == std::string_view::npos) ? sv.size() : close + 1;
+					}
+					continue;
+				}
+
+				if (sv[i] == ' ' || sv[i] == '\t') {
+					++i;
+					continue;
+				}
+
+				const char* it = sv.data() + i;
+				const char* end = sv.data() + sv.size();
+				auto ret = Utils::UTF8Next(it, end);
+				if (!ret) {
+					++i;
+					continue;
+				}
+
+				return IsRtlCodepoint(ret.ch) ? Text::AlignRight : Text::AlignLeft;
+			}
+		}
+
+		return fallback;
+	}
 } //namespace
 
 // C4428 is nonsense
@@ -183,6 +247,12 @@ void Window_Message::StartMessageProcessing(PendingMessage pm) {
 	}
 
 	const auto& lines = pending_message.GetLines();
+
+	// Auto-detect alignment from the first visible character of the
+	// message: RTL scripts (Persian/Arabic/Hebrew) -> right-aligned,
+	// everything else -> left-aligned. Falls back to keeping whatever
+	// alignment was already set if no visible character is found.
+	text_align = DetectAlignment(lines, text_align);
 
 	auto measuring_font = GetFont() ? GetFont() : Font::Default();
 
